@@ -15,7 +15,7 @@ import re
 from models import get_embeddings, connect_db, create_table, insert_data, query_data
 
 # Definir variable de entorno directamente en el script (no recomendado para producción)
-os.environ['GOOGLE_API_KEY'] = 'AIzaSyAStou5qqNC-770W79MV79Im752WOVeytg'
+os.environ['GOOGLE_API_KEY'] = 'g'
 
 # Carga segura de API Key y configuración de genai (Gemini) usando el cliente de Google
 api_key = os.getenv('GOOGLE_API_KEY')
