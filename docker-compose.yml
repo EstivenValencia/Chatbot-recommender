@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  db:
+    image: ankane/pgvector
+    container_name: indexacion
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: vectordb
+      POSTGRES_USER: estiven
+      POSTGRES_PASSWORD: estiven123
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: estivenvalenciacastrillon@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: estiven123
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
