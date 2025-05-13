@@ -16,15 +16,23 @@ cur = conn.cursor()
 cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
 # Crear tabla eventos
+# cur.execute("""
+# CREATE TABLE IF NOT EXISTS eventos (
+#     id SERIAL PRIMARY KEY,
+#     categoria TEXT,
+#     titulo TEXT,
+#     lugar TEXT,
+#     fecha DATE,
+#     hora_inicio TEXT,
+#     embedding VECTOR(768)  -- ajusta 768 al tamaño real de tu modelo
+# );
+# """)
+
 cur.execute("""
-CREATE TABLE IF NOT EXISTS eventos (
-    id SERIAL PRIMARY KEY,
-    categoria TEXT,
-    titulo TEXT,
-    lugar TEXT,
-    fecha DATE,
-    hora_inicio TEXT,
-    embedding VECTOR(768)  -- ajusta 768 al tamaño real de tu modelo
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_name    TEXT PRIMARY KEY,  -- el nombre del usuario
+    profile_date DATE     NOT NULL, -- la fecha de creación del perfil
+    profile_text TEXT     NOT NULL  -- texto libre con la información de gustos, intereses, etc.
 );
 """)
 

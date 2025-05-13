@@ -3,3 +3,5 @@ docker-compose up -d
 
 echo "URL para acceder a la base de datos: http://localhost:5050/login?next=/"
 
+# Iniciando servidor de chat
+#streamlit run frontend.py

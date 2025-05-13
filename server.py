@@ -13,6 +13,12 @@ import re
 
 # Importar helpers de la base de datos y embeddings
 from models import get_embeddings, connect_db, create_table, insert_data, query_data
+from models import get_user_profile, insert_user_profile
+from models import load_model_normalization, normalize_category, load_model_missing_categories, ranking_missing_categories
+
+##########################################
+#               GOOGLE API
+##########################################
 
 # Definir variable de entorno directamente en el script (no recomendado para producción)
 os.environ['GOOGLE_API_KEY'] = 'AIzaSyAStou5qqNC-770W79MV79Im752WOVeytg'
@@ -49,6 +55,19 @@ Eres 'LagunAI', un asistente que construye un perfil del usuario preguntando sus
 Haz preguntas abiertas para conocer categorías de eventos, preferencias de horario, ubicaciones favoritas y estilo de actividades.
 Guarda cada respuesta en el perfil de la sesión (prefs).
 """
+
+##########################################
+#           NORMALIZACION DE CATEGORIA
+##########################################
+
+MODEL, EMBS_N, CANONICAL_LABELS_N, RULE_MAP, THRESHOLD = load_model_normalization()
+
+##################################################
+#           ETIQUETADO DE CATEGORIAS FALTANTES
+##################################################
+
+BM25, TFIDF, X_TFIDF, LABELS_M = load_model_missing_categories()
+
 
 # Formateo del historial
 def format_history(history):
@@ -107,42 +126,48 @@ def get_profile_response(query, history, prefs):
     # Construir prompt para perfil
     prompt = f"""{profile_instruction}
 
-Historial de perfil hasta ahora:
-{format_history(history)}
+                Historial de perfil hasta ahora:
+                {format_history(history)}
 
-Pregunta del usuario:
-{query}
+                Respuesta del usuario o nombre:
+                {query}
 
-Siguiente pregunta de LagunAI para profundizar en su perfil:
-"""
+                Siguiente pregunta de LagunAI para profundizar en su perfil:
+                """
+
     response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
     text = response.text.strip() if getattr(response, 'text', None) else "Lo siento, no pude generar una pregunta."
     history.append({'query': query, 'response': text})
     return text
 
 # RAG + generación con Gemini
-def get_rag_response(query, history, date_filter=None, category_filter=None, limit=5):
+def get_rag_response(query, history, date_filter=None, category_filter=None, limit=1):
     q_emb = get_embeddings(query)
     conn, cur = connect_db()
     rows = query_data(cur, q_emb, limit, date=date_filter)
+    print(rows)
     conn.close()
+
     if category_filter:
         rows = [r for r in rows if r[1].lower()==category_filter.lower()][:limit]
+
     context = ("".join([f"- {r[2]} ({r[1]}) el {r[4]} en {r[3]}\n" for r in rows])
                if rows else "No se encontraron eventos con esos criterios.")
+    
     prompt = f"""{system_instruction}
 
---- Historial ---
-{format_history(history)}
+                --- Historial ---
+                {format_history(history)}
 
---- Contexto Recuperado ---
-{context}
+                --- Contexto Recuperado ---
+                {context}
 
---- Pregunta ---
-{query}
+                --- Pregunta ---
+                {query}
 
---- Respuesta ---
-"""
+                --- Respuesta ---
+                """
+
     response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
     text = response.text.strip() if getattr(response, 'text', None) else "Lo siento, no pude generar respuesta."
     history.append({'query': query, 'response': text})
@@ -155,6 +180,7 @@ user_sessions = {}  # session_id -> {'history': [], 'prefs': {}}
 class QueryRequest(BaseModel):
     session_id: str
     query: str
+    user_name: str | None = None
     limit: int = 5
 
 @app.post('/init_db')
@@ -169,48 +195,160 @@ async def init_db():
 async def add_events(file: UploadFile = File(...)):
     try:
         df = pd.read_csv(file.file)
-        df['text']=df['categoria']+': '+df['titulo']+': '+df['descripcion']
+        
+        # 1) Clasificar nuevas categorias
+        mask = df["categoria"].isna()
+        
+        df.loc[mask, "Categoria_Normalizada"] = (
+            df.loc[mask, "Título"]
+            .apply(lambda title: ranking_missing_categories(
+                title,
+                bm25=BM25,
+                tfidf=TFIDF,
+                X_tfidf=X_TFIDF,
+                labels=LABELS_M,
+                k=10
+            ))
+        )
+
+        # 2) Normalizar categorías
+        df['categoria_normalizada'] = df['categoria'].apply(lambda x: normalize_category(
+                x,
+                RULE_MAP,
+                THRESHOLD,
+                CANONICAL_LABELS_N,
+                MODEL,
+                EMBS_N
+            ))
+        
+        # 3) Construir el texto usando la categoría normalizada
+        df['text'] = (
+            df['categoria_normalizada'] + ': ' +
+            df['titulo'] + ': ' +
+            df['descripcion']
+        )
+
         embeddings=get_embeddings(df['text'].tolist())
         conn,cur=connect_db(); insert_data(cur,df,embeddings); conn.close()
         return {'message':f'{len(df)} eventos añadidos correctamente.'}
     except Exception as e:
         raise HTTPException(status_code=500,detail=str(e))
 
+
+# @app.post('/query_friendly')
+# async def query_friendly(req: QueryRequest):
+#     sess = user_sessions.setdefault(req.session_id, {'history': [], 'prefs': {}})
+#     prefs = sess['prefs']; hist = sess['history']
+#     # Detectar fecha relativa o explícita
+#     detected = parse_date_expression(req.query)
+#     # if req.date:
+#     #     detected = req.date
+#     print("Fecha: ",detected)
+#     if detected:
+#         prefs['date'] = detected
+#         # RAG response
+#         response, rows = get_rag_response(req.query, hist, prefs.get('date'), prefs.get('category'), req.limit)
+#     else:
+#         # Perfil response hasta completar 5 preguntas
+#         count = prefs.get('profile_count', 0)
+#         if count < 3:
+#             prefs['profile_count'] = count + 1
+#             response = get_profile_response(req.query, hist, prefs)
+#         else:
+#             # Perfil complete
+#             prefs['profile_complete'] = True
+#             response = (
+#                 "¡Fantástico! Ya conozco tus gustos y preferencias. "
+#                 "Ahora estoy listo para recomendarte los mejores eventos. "
+#                 "¿Qué fecha te interesa?"
+#             )
+#         rows = []
+
+#     # Formatear eventos
+#     events = [
+#         {'id': r[0], 'categoria': r[1], 'titulo': r[2], 'ubicacion': r[3], 'fecha': str(r[4])}
+#         for r in rows
+#     ]
+#     return {'response': response, 'events': events}
+
+
 @app.post('/query_friendly')
 async def query_friendly(req: QueryRequest):
     sess = user_sessions.setdefault(req.session_id, {'history': [], 'prefs': {}})
     prefs = sess['prefs']; hist = sess['history']
-    # Detectar fecha relativa o explícita
-    detected = parse_date_expression(req.query)
-    # if req.date:
-    #     detected = req.date
-    print("Fecha: ",detected)
-    if detected:
-        prefs['date'] = detected
-        # RAG response
-        response, rows = get_rag_response(req.query, hist, prefs.get('date'), prefs.get('category'), req.limit)
-    else:
-        # Perfil response hasta completar 5 preguntas
-        count = prefs.get('profile_count', 0)
-        if count < 2:
-            prefs['profile_count'] = count + 1
-            response = get_profile_response(req.query, hist, prefs)
-        else:
-            # Perfil complete
-            prefs['profile_complete'] = True
-            response = (
-                "¡Fantástico! Ya conozco tus gustos y preferencias. "
-                "Ahora estoy listo para recomendarte los mejores eventos. "
-                "¿Qué fecha te interesa?"
-            )
-        rows = []
 
-    # Formatear eventos
+    # 1) Identificación: primera vez que llega user_name
+    if 'user_name' not in prefs:
+        if not req.user_name:
+            raise HTTPException(status_code=400, detail="Se requiere user_name para identificación.")
+        prefs['user_name'] = req.user_name
+        conn, cur = connect_db()
+        profile = get_user_profile(cur, req.user_name)
+        conn.close()
+        if profile:
+            # Usuario existente: saludar
+            return {
+                "response": f"¡Bienvenido de nuevo, {req.user_name}! ¿En qué puedo ayudarte hoy?.",
+                "events": []
+            }
+        # Nuevo usuario: iniciar perfil
+        prefs['profile_qas'] = []
+        next_q = get_profile_response(req.query, hist, prefs)
+        return {"response": next_q, "events": []}
+
+    # 2) Fase de perfil (recoger Q&A)
+    if not prefs.get('profile_complete'):
+        # Registrar la respuesta a la última pregunta
+        prefs['profile_qas'].append({
+            'question': hist[-1]['response'],  # última pregunta generada
+            'answer': req.query
+        })
+        # Si no hemos hecho 3 preguntas aún
+        if len(prefs['profile_qas']) < 3:
+            next_q = get_profile_response(req.query, hist, prefs)
+            return {"response": next_q, "events": []}
+        # Perfil completo: generar resumen y guardar
+        qa_text = "\n".join([
+            f"P: {qa['question']}\nR: {qa['answer']}" for qa in prefs['profile_qas']
+        ])
+        summary_prompt = f"Genera un perfil de usuario en base a estas preguntas y respuestas:\n{qa_text}\nPerfil:"  
+        summary_resp = client.models.generate_content(model="gemini-2.0-flash", contents=summary_prompt)
+        profile_summary = summary_resp.text.strip() or ""
+
+        # Guardar en BD
+        conn, cur = connect_db()
+        insert_user_profile(cur, prefs['user_name'], profile_summary)
+        conn.close()
+        prefs['profile_complete'] = True
+        prefs['profile_summary'] = profile_summary
+        
+        return {
+            "response": f"¡Perfecto! He creado tu perfil:\n{profile_summary} \n\n\n ¿En qué más puedo ayudarte?",
+            "events": []
+        }
+
+    # 3) Ya identificado y perfil completo => ahora detectamos fecha en la query
+    detected = parse_date_expression(req.query)
+    if detected:
+        print("Fecha: ",detected)
+        prefs['date'] = detected
+
+        response, rows = get_rag_response(
+            req.query, hist,
+            date_filter=prefs.get('date'),
+            category_filter=prefs.get('category'),
+            limit=req.limit
+        )
+    else:
+        # Si no hay fecha, informamos al usuario
+        return {"response": "Todavía no tengo una fecha en tu consulta. ¿Puedes indicar una fecha o un rango de fechas?", "events": []}
+
+    # Formatear eventos y devolver respuesta RAG
     events = [
         {'id': r[0], 'categoria': r[1], 'titulo': r[2], 'ubicacion': r[3], 'fecha': str(r[4])}
         for r in rows
     ]
-    return {'response': response, 'events': events}
+    return {"response": response, "events": events}
 
 if __name__=='__main__':
     uvicorn.run(app,host='0.0.0.0',port=5000)
