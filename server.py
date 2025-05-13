@@ -21,7 +21,7 @@ from models import load_model_normalization, normalize_category, load_model_miss
 ##########################################
 
 # Definir variable de entorno directamente en el script (no recomendado para producción)
-os.environ['GOOGLE_API_KEY'] = 'AIzaSyAStou5qqNC-770W79MV79Im752WOVeytg'
+os.environ['GOOGLE_API_KEY'] = 'g'
 
 # Carga segura de API Key y configuración de genai (Gemini) usando el cliente de Google
 api_key = os.getenv('GOOGLE_API_KEY')
