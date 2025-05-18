@@ -12,19 +12,22 @@ from pydantic import BaseModel
 from py_heideltime import heideltime
 from google import genai
 from config import TOKEN_GEMINI
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from contextlib import asynccontextmanager
+
 
 from models import (
     connect_db,
     create_table,
-    insert_data,
-    query_data,
+    insert_events,
+    query_events,
     get_embeddings,
     get_user_profile,
     insert_user_profile,
     load_model_missing_categories,
     load_model_normalization,
     normalize_category,
-    ranking_missing_categories,
+    rank_missing_categories,
 )
 
 ###########################################
@@ -71,8 +74,8 @@ system_instruction = (
     """
 )
 
-profile_instruction = f(
-    """
+profile_instruction = (
+    f"""
     Eres 'guru', un asistente que construye un perfil del usuario preguntando
     sus gustos y preferencias de ocio.
     Para ello deberás preguntarle sobre cuales de las siguientes categorias
@@ -87,6 +90,28 @@ profile_instruction = f(
 ###########################################
 #            FUNCIONES AUXILIARES         #
 ###########################################
+
+def process_events_from_file(path: str) -> int:
+    df = pd.read_csv(path)
+    mask = df['Categoría'].isna()
+    df.loc[mask, 'Categoría'] = df.loc[mask, 'Título'].apply(
+        lambda title: rank_missing_categories(
+            title, bm25=BM25, tfidf=TFIDF, X_tfidf=X_TFIDF, labels=LABELS_M, k=10
+        )
+    )
+    df['Categoría'] = df['Categoría'].apply(
+        lambda x: normalize_category(
+            x, RULE_MAP, THRESHOLD, CANONICAL_LABELS_N, MODEL, EMBS_N
+        )
+    )
+    df['text'] = df['Categoría'] + ': ' + df['Título'] + ': ' + df['Descripción']
+    embeddings = get_embeddings(df['text'].tolist())
+    conn, cur = connect_db()
+    insert_events(cur, df, embeddings)
+    conn.close()
+    os.remove(path)
+    return len(df)
+
 
 def format_history(history):
     """
@@ -206,7 +231,7 @@ def get_rag_response(
     """
     q_emb = get_embeddings(query)
     conn, cur = connect_db()
-    rows, raw_rows = query_data(cur, q_emb, limit, date=date_filter)
+    rows, raw_rows = query_events(cur, q_emb, limit, date=date_filter)
     conn.close()
 
     context = "\n".join(rows) if rows else "No se encontraron eventos con esos criterios."
@@ -226,8 +251,26 @@ def get_rag_response(
 ###########################################
 #           CONFIGURACIÓN DE API          #
 ###########################################
+scheduler = AsyncIOScheduler()
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Arranca el scheduler justo antes de que FastAPI empiece a servir
+    scheduler.start()
+    # Programa tu tarea cada 12 horas
+    scheduler.add_job(
+        lambda: process_events_from_file("eventos_nuevos.csv"),
+        'interval',
+        hours=12,
+        #minutes=1,
+        id="add_events_job",           # opcional: un ID único para gestionar la tarea
+        replace_existing=True          # opcional: evita duplicados si se reinicia
+    )
+    yield
+    # Se ejecuta cuando la app se está cerrando
+    scheduler.shutdown(wait=False)
+
+app = FastAPI(lifespan=lifespan)
 user_sessions = {}
 
 class QueryRequest(BaseModel):
@@ -275,7 +318,7 @@ async def add_events(file: UploadFile = File(...)):
         # Clasificar categorías faltantes
         mask = df['Categoría'].isna()
         df.loc[mask, 'Categoría'] = df.loc[mask, 'Título'].apply(
-            lambda title: ranking_missing_categories(
+            lambda title: rank_missing_categories(
                 title, bm25=BM25, tfidf=TFIDF, X_tfidf=X_TFIDF, labels=LABELS_M, k=10
             )
         )
@@ -290,7 +333,7 @@ async def add_events(file: UploadFile = File(...)):
 
         embeddings = get_embeddings(df['text'].tolist())
         conn, cur = connect_db()
-        insert_data(cur, df, embeddings)
+        insert_events(cur, df, embeddings)
         conn.close()
         return {'message': f'{len(df)} eventos añadidos correctamente.'}
     except Exception as e:
