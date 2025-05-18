@@ -1,0 +1,34 @@
+{
+  "canonical_labels": [
+    "Exposiciones & Ferias",
+    "Música & Conciertos",
+    "Teatro & Danza",
+    "Congresos & Charlas",
+    "Cineclub",
+    "Gastronomía & Festivales",
+    "Ocio familiar",
+    "Deporte",
+    "Libros & Literatura",
+    "Varios / Otros"
+  ],
+  "rule_map": {
+    "concierto": "Música & Conciertos",
+    "música": "Música & Conciertos",
+    "espectáculo": "Exposiciones & Ferias",
+    "feria": "Exposiciones & Ferias",
+    "mercado": "Exposiciones & Ferias",
+    "teatro": "Teatro & Danza",
+    "danza": "Teatro & Danza",
+    "bailable": "Teatro & Danza",
+    "conferencia": "Congresos & Charlas",
+    "charla": "Congresos & Charlas",
+    "foro": "Congresos & Charlas",
+    "cineclub": "Cineclub",
+    "gastronómico": "Gastronomía & Festivales",
+    "fiesta": "Gastronomía & Festivales",
+    "niño": "Ocio familiar",
+    "deporte": "Deporte",
+    "libro": "Libros & Literatura"
+  },
+  "threshold": 0.6
+}
