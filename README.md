@@ -61,7 +61,21 @@ python Init_DB/connect_events_db.py
 
 Deberá crear un archivo `config.py` vacio en este nivel del directorio.y deberá definir dos variables str `URL_EMBEDDING_MODEL` y `TOKEN_GEMINI` que deberá dejar vacias por ahora. 
 
-**a. Servidor embedding COLAB**
+**a. Servir scraping**
+
+Antes de ejecutar el servidor web scrapping instale
+
+```bash
+playwright installplaywright install
+```
+
+Luego para iniciar el servidor ejecute
+
+```bash
+python merge.py
+```
+
+**b. Servidor embedding COLAB**
 
 Debido a las limitaciones de recursos para ejecutar el proyecto, el modulo encargado de calcular los embeddings de los modelos
 se encuentra definido dentro de un notebook que se puede ejecutar en colab, para ello se debe subir el notebook  `Servidor_embedding.ipynb`, al ejecutarlo encontrará en el penultima celda la salida `Ngrok URL: https://8963-34-9-207-28.ngrok-free.app` que corresponde
@@ -69,7 +83,7 @@ a la URL del servidor, esta URL debe reemplazarse en la variable `URL_EMBEDDING_
 
 También deberá contar con el token de gemini, ya que este proyecto utiliza el modelo más liviano de google, este deberá estar definido dentro de la variable `TOKEN_GEMINI` del archivo config.
 
-**b. Inciar base de datos**
+**c. Inciar base de datos**
 
 Ejecute la siguiente línea para iniciar el servidor backend
 
@@ -77,7 +91,7 @@ Ejecute la siguiente línea para iniciar el servidor backend
 docker-compose up -d
 ```
 
-**b. Inciar servidor backend**
+**d. Inciar servidor backend**
 
 Ejecute la siguiente línea para iniciar el servidor backend
 
@@ -85,7 +99,7 @@ Ejecute la siguiente línea para iniciar el servidor backend
 python server.py
 ```
 
-**b. Inciar servidor frontend**
+**e. Inciar servidor frontend**
 
 Ejecute la siguiente línea para iniciar el servidor frontend
 
